@@ -2,7 +2,6 @@ package io.pyroscope.labels.v2;
 
 
 import io.pyroscope.PyroscopeAsyncProfiler;
-import io.pyroscope.labels.pb.JfrLabels.LabelsSnapshot;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -31,14 +30,14 @@ public class LabelsTest {
                         expectSnapshot()
                                 .add(1L, "k1", "v1")
                         ,
-                        Pyroscope.LabelsWrapper.dump());
+                        dumpBytes());
             }
             {
                 assertSnapshot(
                         expectSnapshot()
                                 .add(1L, "k1", "v1")
                         ,
-                        Pyroscope.LabelsWrapper.dump());
+                        dumpBytes());
             }
         }
         {
@@ -46,14 +45,14 @@ public class LabelsTest {
                     expectSnapshot()
                             .add(1L, "k1", "v1")
                     ,
-                    Pyroscope.LabelsWrapper.dump());
+                    dumpBytes());
         }
 
         {
             assertSnapshot(
                     expectSnapshot()
                     ,
-                    Pyroscope.LabelsWrapper.dump());
+                    dumpBytes());
         }
     }
 
@@ -67,32 +66,32 @@ public class LabelsTest {
                                 .add(1L, "k1", "v1")
                                 .add(2L, "k1", "v1")
                         ,
-                        Pyroscope.LabelsWrapper.dump());
+                        dumpBytes());
             }
             assertSnapshot(
                     expectSnapshot()
                             .add(1L, "k1", "v1")
                             .add(2L, "k1", "v1")
                     ,
-                    Pyroscope.LabelsWrapper.dump());
+                    dumpBytes());
             assertSnapshot(
                     expectSnapshot()
                             .add(1L, "k1", "v1")
                     ,
-                    Pyroscope.LabelsWrapper.dump());
+                    dumpBytes());
         }
         {
             assertSnapshot(
                     expectSnapshot()
                             .add(1L, "k1", "v1")
                     ,
-                    Pyroscope.LabelsWrapper.dump());
+                    dumpBytes());
         }
         {
             assertSnapshot(
                     expectSnapshot()
                     ,
-                    Pyroscope.LabelsWrapper.dump());
+                    dumpBytes());
         }
     }
 
@@ -107,7 +106,7 @@ public class LabelsTest {
                                     .add(1L, "k1", "v1")
                                     .add(2L, "k1", "v2")
                             ,
-                            Pyroscope.LabelsWrapper.dump());
+                            dumpBytes());
                     throw new AssertionError();
                 }
             } catch (AssertionError e) {
@@ -117,14 +116,14 @@ public class LabelsTest {
                                     .add(1L, "k1", "v1")
                                     .add(2L, "k1", "v2")
                             ,
-                            Pyroscope.LabelsWrapper.dump());
+                            dumpBytes());
                 }
                 {
                     assertSnapshot(
                             expectSnapshot()
                                     .add(1L, "k1", "v1")
                             ,
-                            Pyroscope.LabelsWrapper.dump());
+                            dumpBytes());
                 }
             }
         }
@@ -133,13 +132,13 @@ public class LabelsTest {
                     expectSnapshot()
                             .add(1L, "k1", "v1")
                     ,
-                    Pyroscope.LabelsWrapper.dump());
+                    dumpBytes());
         }
         {
             assertSnapshot(
                     expectSnapshot()
                     ,
-                    Pyroscope.LabelsWrapper.dump());
+                    dumpBytes());
         }
     }
 
@@ -158,31 +157,41 @@ public class LabelsTest {
                         .add(2L, "path", "/foo/bar", "qwe", "asd")
                         .add(3L, "path", "/qwe/asd", "zxc", "ass")
                 ,
-                Pyroscope.LabelsWrapper.dump());
+                dumpBytes());
 
         assertSnapshot(
                 expectSnapshot()
                         .add(2L, "path", "/foo/bar", "qwe", "asd")
                         .add(3L, "path", "/qwe/asd", "zxc", "ass")
                 ,
-                Pyroscope.LabelsWrapper.dump());
+                dumpBytes());
     }
 
-    void assertSnapshot(ExpectedContextBuilder expected, LabelsSnapshot snapshot) {
+    /** Serializes a dump, so assertions run against the actual wire bytes. */
+    static byte[] dumpBytes() {
+        return Pyroscope.LabelsWrapper.dump().toByteArray();
+    }
+
+    void assertSnapshot(ExpectedContextBuilder expected, byte[] snapshot) {
         Map<Long, Map<String, String>> expectedContexts = expected.contexts;
+        final LabelsSnapshotReader.Parsed parsed = LabelsSnapshotReader.parse(snapshot);
         final HashSet<String> uniqueStrings = new HashSet<>();
         Map<Long, Map<String, String>> actualContexts = new HashMap<>();
-        snapshot.getContextsMap().forEach((contextID, context) -> {
+        parsed.contexts.forEach((contextID, labels) -> {
             final Map<String, String> ctx = new HashMap<>();
-            context.getLabelsMap().forEach((key, value) -> {
-                ctx.put(snapshot.getStringsMap().get(key), snapshot.getStringsMap().get(value));
-                uniqueStrings.add(snapshot.getStringsMap().get(key));
-                uniqueStrings.add(snapshot.getStringsMap().get(value));
+            labels.forEach((key, value) -> {
+                final String k = parsed.strings.get(key);
+                final String v = parsed.strings.get(value);
+                assertNotNull(k, "no string for id " + key);
+                assertNotNull(v, "no string for id " + value);
+                ctx.put(k, v);
+                uniqueStrings.add(k);
+                uniqueStrings.add(v);
             });
             actualContexts.put(contextID, ctx);
         });
         uniqueStrings.addAll(expected.constant.values());
-        assertEquals(uniqueStrings.size(), snapshot.getStringsCount());
+        assertEquals(uniqueStrings.size(), parsed.strings.size());
         assertEquals(expectedContexts, actualContexts);
     }
 
@@ -269,7 +278,7 @@ public class LabelsTest {
         }
         long c3 = Pyroscope.LabelsWrapper.registerConstant("const3");
         {
-            LabelsSnapshot snapshot = Pyroscope.LabelsWrapper.dump();
+            byte[] snapshot = dumpBytes();
             assertSnapshot(
                     expectSnapshot()
                             .constant(1L, "const1")
@@ -280,7 +289,7 @@ public class LabelsTest {
             );
         }
         {
-            LabelsSnapshot snapshot = Pyroscope.LabelsWrapper.dump();
+            byte[] snapshot = dumpBytes();
             assertSnapshot(
                     expectSnapshot()
                             .constant(1L, "const1")
