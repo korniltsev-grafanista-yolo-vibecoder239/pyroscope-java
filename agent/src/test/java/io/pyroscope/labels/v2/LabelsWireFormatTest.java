@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -184,6 +185,31 @@ public class LabelsWireFormatTest {
         assertEquals(3, p.contexts.size());
         assertEquals(4, p.strings.size());
         assertArrayEquals(encodeReference(f), encode(f));
+    }
+
+    /**
+     * Registered constants keep the ids they were handed out under, and new ids continue past the
+     * highest one. A dump racing {@code registerConstant} can observe a sparse view of the
+     * constants map, and handing out {@code size() + 1} would then collide with a live id.
+     */
+    @Test
+    void sparseConstantIdsAreSeededWithoutCollision() {
+        LinkedHashMap<String, Long> constants = new LinkedHashMap<>();
+        constants.put("a", 1L);
+        constants.put("c", 3L);   // 2 not observed yet
+
+        LabelsSnapshotEncoder enc = new LabelsSnapshotEncoder(64, 16);
+        enc.seedStringTable(constants);
+        enc.writeContext(1, new String[]{"k", "a"});
+        enc.writeStringTable();
+        LabelsSnapshotReader.Parsed p = LabelsSnapshotReader.parse(enc.finish().toByteArray());
+
+        assertEquals("a", p.strings.get(1L));
+        assertEquals("c", p.strings.get(3L));
+        assertEquals("k", p.strings.get(4L), "new ids must continue past the highest seeded id");
+        assertFalse(p.strings.containsKey(2L), "the unobserved id stays a hole");
+        // The label reuses the seeded id for "a" instead of interning it again.
+        assertEquals(Long.valueOf(1L), p.contexts.get(1L).get(4L));
     }
 
     private static void assertBytes(String expectedHex, Fixture f) {
