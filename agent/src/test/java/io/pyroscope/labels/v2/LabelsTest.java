@@ -2,6 +2,7 @@ package io.pyroscope.labels.v2;
 
 
 import io.pyroscope.PyroscopeAsyncProfiler;
+import io.pyroscope.labels.pbref.JfrLabels.LabelsSnapshot;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -173,26 +174,21 @@ public class LabelsTest {
     }
 
     void assertSnapshot(ExpectedContextBuilder expected, byte[] snapshot) {
-        Map<Long, Map<String, String>> expectedContexts = expected.contexts;
-        final LabelsSnapshotReader.Parsed parsed = LabelsSnapshotReader.parse(snapshot);
+        LabelsSnapshot parsed = LabelsSnapshots.parseCanonical(snapshot);
+        Map<Long, Map<String, String>> actualContexts = LabelsSnapshots.flatten(parsed);
+
         final HashSet<String> uniqueStrings = new HashSet<>();
-        Map<Long, Map<String, String>> actualContexts = new HashMap<>();
-        parsed.contexts.forEach((contextID, labels) -> {
-            final Map<String, String> ctx = new HashMap<>();
-            labels.forEach((key, value) -> {
-                final String k = parsed.strings.get(key);
-                final String v = parsed.strings.get(value);
-                assertNotNull(k, "no string for id " + key);
-                assertNotNull(v, "no string for id " + value);
-                ctx.put(k, v);
+        for (Map<String, String> labels : actualContexts.values()) {
+            labels.forEach((k, v) -> {
+                assertNotNull(k, "label key missing from the string table");
+                assertNotNull(v, "label value missing from the string table");
                 uniqueStrings.add(k);
                 uniqueStrings.add(v);
             });
-            actualContexts.put(contextID, ctx);
-        });
+        }
         uniqueStrings.addAll(expected.constant.values());
-        assertEquals(uniqueStrings.size(), parsed.strings.size());
-        assertEquals(expectedContexts, actualContexts);
+        assertEquals(uniqueStrings.size(), parsed.getStringsCount());
+        assertEquals(expected.contexts, new HashMap<>(actualContexts));
     }
 
 

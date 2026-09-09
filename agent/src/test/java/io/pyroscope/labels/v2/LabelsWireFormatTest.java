@@ -9,6 +9,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -121,7 +122,8 @@ public class LabelsWireFormatTest {
             assertArrayEquals(encodeReference(f), encode(f), "context id " + id);
             assertEquals(
                     id,
-                    LabelsSnapshotReader.parse(encode(f)).contexts.keySet().iterator().next(),
+                    LabelsSnapshots.parseCanonical(encode(f))
+                            .getContextsMap().keySet().iterator().next().longValue(),
                     "context id " + id);
         }
     }
@@ -169,7 +171,7 @@ public class LabelsWireFormatTest {
     @Test
     void unpairedSurrogateIsEncodedLikeGetBytes() {
         Fixture f = fixture().add(1, "k", "a\ud800b");
-        String decoded = LabelsSnapshotReader.parse(encodeReference(f)).strings.get(2L);
+        String decoded = LabelsSnapshots.parse(encodeReference(f)).getStringsMap().get(2L);
         assertArrayEquals("a\ud800b".getBytes(StandardCharsets.UTF_8),
                 decoded.getBytes(StandardCharsets.UTF_8));
         assertEquals("a?b", decoded);
@@ -181,9 +183,9 @@ public class LabelsWireFormatTest {
                 .add(1, "k1", "v1")
                 .add(2, "k1", "v2")
                 .add(3, "k2", "v1");
-        LabelsSnapshotReader.Parsed p = LabelsSnapshotReader.parse(encode(f));
-        assertEquals(3, p.contexts.size());
-        assertEquals(4, p.strings.size());
+        JfrLabels.LabelsSnapshot p = LabelsSnapshots.parseCanonical(encode(f));
+        assertEquals(3, p.getContextsCount());
+        assertEquals(4, p.getStringsCount());
         assertArrayEquals(encodeReference(f), encode(f));
     }
 
@@ -202,14 +204,37 @@ public class LabelsWireFormatTest {
         enc.seedStringTable(constants);
         enc.writeContext(1, new String[]{"k", "a"});
         enc.writeStringTable();
-        LabelsSnapshotReader.Parsed p = LabelsSnapshotReader.parse(enc.finish().toByteArray());
+        JfrLabels.LabelsSnapshot p = LabelsSnapshots.parseCanonical(enc.finish().toByteArray());
 
-        assertEquals("a", p.strings.get(1L));
-        assertEquals("c", p.strings.get(3L));
-        assertEquals("k", p.strings.get(4L), "new ids must continue past the highest seeded id");
-        assertFalse(p.strings.containsKey(2L), "the unobserved id stays a hole");
+        assertEquals("a", p.getStringsMap().get(1L));
+        assertEquals("c", p.getStringsMap().get(3L));
+        assertEquals("k", p.getStringsMap().get(4L),
+                "new ids must continue past the highest seeded id");
+        assertFalse(p.getStringsMap().containsKey(2L), "the unobserved id stays a hole");
         // The label reuses the seeded id for "a" instead of interning it again.
-        assertEquals(Long.valueOf(1L), p.contexts.get(1L).get(4L));
+        assertEquals(Long.valueOf(1L), p.getContextsMap().get(1L).getLabelsMap().get(4L));
+    }
+
+    /**
+     * Shows the canonicality check has teeth. async-profiler's own protobuf writer back-patches a
+     * padded, non-minimal length varint; protobuf's parser accepts that silently, so only the
+     * re-serialization check would catch the encoder drifting that way.
+     */
+    @Test
+    void paddedLengthVarintParsesButIsNotCanonical() {
+        // oneContextOneLabel(), except the Context length 0x06 is written as 0x86 0x00, and the
+        // enclosing entry length grows from 0x0A to 0x0B to match.
+        byte[] padded = unhex(""
+                + "0A 0B 08 01 12 86 00 0A 04 08 01 10 02"
+                + "12 06 08 01 12 02 6B 31"
+                + "12 06 08 02 12 02 76 31");
+        byte[] canonical = encode(fixture().add(1, "k1", "v1"));
+
+        // protobuf reads both as the same message...
+        assertArrayEquals(canonical, LabelsSnapshots.parse(padded).toByteArray());
+        // ...but only the minimal encoding survives the round trip unchanged.
+        assertThrows(AssertionError.class, () -> LabelsSnapshots.parseCanonical(padded));
+        LabelsSnapshots.parseCanonical(canonical);
     }
 
     private static void assertBytes(String expectedHex, Fixture f) {

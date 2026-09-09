@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
+import static io.pyroscope.labels.v2.LabelsSnapshots.flatten;
 import static io.pyroscope.labels.v2.LabelsWireFormatTest.Fixture;
 import static io.pyroscope.labels.v2.LabelsWireFormatTest.encode;
 import static io.pyroscope.labels.v2.LabelsWireFormatTest.encodeReference;
@@ -173,14 +174,4 @@ public class LabelsEncoderCompatTest {
         return new String(s.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
     }
 
-    private static Map<Long, Map<String, String>> flatten(JfrLabels.LabelsSnapshot snapshot) {
-        Map<Long, Map<String, String>> out = new LinkedHashMap<>();
-        Map<Long, String> strings = snapshot.getStringsMap();
-        snapshot.getContextsMap().forEach((contextId, context) -> {
-            Map<String, String> labels = new LinkedHashMap<>();
-            context.getLabelsMap().forEach((k, v) -> labels.put(strings.get(k), strings.get(v)));
-            out.put(contextId, labels);
-        });
-        return out;
-    }
 }
