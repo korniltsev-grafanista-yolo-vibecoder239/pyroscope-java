@@ -93,21 +93,27 @@ final class LabelsSnapshotEncoder {
         }
         int[] ids = this.ids;
 
-        // Pass 1: intern the strings and compute the exact nested lengths.
-        int body = 0;
+        // Pass 1: intern the strings and compute the exact nested lengths. The sizes accumulate in
+        // long so a pathological input cannot overflow them into a negative that then reads as a
+        // plausible length; the single check below is what rejects it.
+        long bodyLen = 0;
         for (int i = 0; i < n; i += 2) {
             int k = table.intern(args[i]);
             int v = table.intern(args[i + 1]);
             ids[i] = k;
             ids[i + 1] = v;
             int entry = 1 + varintSize(k) + 1 + varintSize(v);
-            body += 1 + varintSize(entry) + entry;
+            bodyLen += 1 + varintSize(entry) + entry;
         }
-        int value = 1 + varintSize(contextId) + 1 + varintSize(body) + body;
-        int total = 1 + varintSize(value) + value;
-        if (body < 0 || value < 0 || total < 0) {
-            throw new IllegalStateException("labels of context " + contextId + " are too large");
+        long valueLen = 1 + varintSize(contextId) + 1 + varintSize(bodyLen) + bodyLen;
+        long totalLen = 1 + varintSize(valueLen) + valueLen;
+        if (totalLen > ProtoBuffer.MAX_LENGTH) {
+            throw new IllegalStateException("labels of context " + contextId
+                    + " are too large to encode: " + totalLen + " bytes");
         }
+        int body = (int) bodyLen;
+        int value = (int) valueLen;
+        int total = (int) totalLen;
 
         // Pass 2: one capacity check, then plain stores.
         int start = out.reserve(total);
@@ -148,6 +154,12 @@ final class LabelsSnapshotEncoder {
         checkNotFinished();
         finished = true;
         int len = out.size();
+        if (len == 0) {
+            // An app with no dynamic labels dumps nothing, and the snapshot stays reachable from
+            // the export queue until the upload completes. Drop the buffer instead of carrying a
+            // few kilobytes of zeros through it; costs no copy.
+            return JfrLabels.LabelsSnapshot.EMPTY;
+        }
         // Handed over without copying. Growth can leave the buffer holding up to twice the encoded
         // length, and the snapshot stays reachable until the exporter has uploaded it, so this
         // trades some transient footprint for not copying the payload. Trimming to size was tried
@@ -156,6 +168,13 @@ final class LabelsSnapshotEncoder {
         // the zero-copy hand-off the exporter relies on. The sizing hint in
         // Pyroscope.LabelsWrapper.dump() is what actually keeps the slack small (~12%).
         return new JfrLabels.LabelsSnapshot(out.take(), len);
+    }
+
+    private static void checkStringFits(int id, long totalLen) {
+        if (totalLen > ProtoBuffer.MAX_LENGTH) {
+            throw new IllegalStateException("label string " + id + " is too large to encode: "
+                    + totalLen + " bytes");
+        }
     }
 
     private void checkNotFinished() {
@@ -173,8 +192,11 @@ final class LabelsSnapshotEncoder {
         if (i == n) {
             // ASCII, which is the overwhelmingly common case for label keys and values: write
             // straight into the buffer, no intermediate byte[].
-            int body = 1 + varintSize(id) + 1 + varintSize(n) + n;
-            int total = 1 + varintSize(body) + body;
+            long bodyLen = 1 + varintSize(id) + 1 + varintSize(n) + (long) n;
+            long totalLen = 1 + varintSize(bodyLen) + bodyLen;
+            checkStringFits(id, totalLen);
+            int body = (int) bodyLen;
+            int total = (int) totalLen;
             int start = out.reserve(total);
             byte[] b = out.array();
             int p = start;
@@ -197,8 +219,11 @@ final class LabelsSnapshotEncoder {
         // alike, with no surrogate handling of our own.
         byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
         int len = utf8.length;
-        int body = 1 + varintSize(id) + 1 + varintSize(len) + len;
-        int total = 1 + varintSize(body) + body;
+        long bodyLen = 1 + varintSize(id) + 1 + varintSize(len) + (long) len;
+        long totalLen = 1 + varintSize(bodyLen) + bodyLen;
+        checkStringFits(id, totalLen);
+        int body = (int) bodyLen;
+        int total = (int) totalLen;
         int start = out.reserve(total);
         byte[] b = out.array();
         int p = start;

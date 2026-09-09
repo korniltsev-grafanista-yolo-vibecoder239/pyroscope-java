@@ -21,10 +21,12 @@ import java.util.Arrays;
 final class ProtoBuffer {
 
     private static final byte[] EMPTY = new byte[0];
-    /** Largest array this VM will reliably allocate. StringTable has its own copy on purpose: the
-     * two classes size independently, and a shared constants holder would couple them for a value
-     * that is really just a JDK limit. */
-    private static final int MAX_CAPACITY = Integer.MAX_VALUE - 8;
+    /**
+     * Longest encoding this buffer can hold, being the largest array the VM will reliably
+     * allocate. Writers check their computed record sizes against it so an oversized snapshot
+     * fails with a clear message instead of an allocation error deep in {@link #grow}.
+     */
+    static final int MAX_LENGTH = Integer.MAX_VALUE - 8;
     /** Doubling above this would overshoot by too much, so growth slows to a quarter. */
     private static final int DOUBLE_UNTIL = 8 << 20;
 
@@ -109,11 +111,11 @@ final class ProtoBuffer {
 
     private void grow(int n) {
         long min = (long) pos + n;
-        if (min > MAX_CAPACITY) {
+        if (min > MAX_LENGTH) {
             throw new IllegalStateException("labels snapshot too large: " + min + " bytes");
         }
         int cap = buf.length;
         long next = cap <= DOUBLE_UNTIL ? (long) cap * 2 : cap + (cap >> 2);
-        buf = Arrays.copyOf(buf, (int) Math.min(MAX_CAPACITY, Math.max(min, next)));
+        buf = Arrays.copyOf(buf, (int) Math.min(MAX_LENGTH, Math.max(min, next)));
     }
 }

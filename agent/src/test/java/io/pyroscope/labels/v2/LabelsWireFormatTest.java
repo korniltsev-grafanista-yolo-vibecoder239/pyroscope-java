@@ -11,7 +11,9 @@ import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -252,6 +254,23 @@ public class LabelsWireFormatTest {
         // ...but only the minimal encoding survives the round trip unchanged.
         assertThrows(AssertionError.class, () -> LabelsSnapshots.parseCanonical(padded));
         LabelsSnapshots.parseCanonical(canonical);
+    }
+
+    /**
+     * An app that uses no dynamic labels dumps nothing every cycle, and the snapshot is reachable
+     * from the export queue until the upload finishes, so an empty dump must not carry a buffer.
+     */
+    @Test
+    void anEmptySnapshotDoesNotRetainABuffer() {
+        LabelsSnapshotEncoder enc = new LabelsSnapshotEncoder(8192, 1024);
+        enc.writeStringTable();
+        io.pyroscope.labels.pb.JfrLabels.LabelsSnapshot snapshot = enc.finish();
+
+        assertSame(io.pyroscope.labels.pb.JfrLabels.LabelsSnapshot.EMPTY, snapshot);
+        assertEquals(0, snapshot.size());
+        assertTrue(snapshot.isEmpty());
+        assertEquals(0, snapshot.buffer().length, "an empty snapshot should hold no buffer");
+        assertEquals(0, snapshot.toByteArray().length);
     }
 
     /**

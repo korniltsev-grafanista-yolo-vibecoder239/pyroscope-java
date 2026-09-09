@@ -20,6 +20,12 @@ public final class JfrLabels {
      *
      * <p>The wire format is defined by {@code agent/jfr_labels.proto} and is a frozen contract
      * with Grafana Pyroscope's ingest path.
+     *
+     * <p>This is a carrier for bytes, not a value object: it inherits identity
+     * {@code equals}/{@code hashCode}, unlike the protobuf-generated message it replaced, which
+     * compared parsed content. Comparing snapshots is not something the agent does, and doing it
+     * properly would mean comparing {@link #size()} bytes of {@link #buffer()} — never the whole
+     * backing array, which can be longer. Compare {@link #toByteArray()} if you need it.
      */
     public static final class LabelsSnapshot {
 
