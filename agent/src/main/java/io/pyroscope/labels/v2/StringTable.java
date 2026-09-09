@@ -70,8 +70,17 @@ final class StringTable {
                 count = i;
             }
         }
-        // Rebuilt in one pass, sized for the seeded ids, instead of inserting one by one.
-        setTableSize(tableSizeFor(count));
+        // Rebuild the index in one pass rather than inserting the constants one at a time, but
+        // keep the size the constructor was asked for: sizing down to fit the constants alone
+        // would throw away the caller's hint and make the next few hundred thousand interns
+        // re-grow the index from scratch.
+        int size = Math.max(slots.length, tableSizeFor(count));
+        if (size == slots.length) {
+            Arrays.fill(slots, 0);
+        } else {
+            setTableSize(size);
+        }
+        // Rebuilding from strings[] keeps this correct even if something was interned first.
         reindex();
     }
 
