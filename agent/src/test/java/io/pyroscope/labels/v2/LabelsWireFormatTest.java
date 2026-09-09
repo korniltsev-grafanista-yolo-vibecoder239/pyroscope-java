@@ -4,8 +4,10 @@ import io.pyroscope.labels.pbref.JfrLabels;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -28,19 +30,34 @@ public class LabelsWireFormatTest {
      */
     static final class Fixture {
         final LinkedHashMap<Long, String[]> contexts = new LinkedHashMap<>();
+        /** Pre-assigned ids, as {@code Pyroscope.LabelsWrapper.CONSTANTS} would supply them. */
+        final LinkedHashMap<String, Long> constants = new LinkedHashMap<>();
 
         Fixture add(long contextId, String... labels) {
             contexts.put(contextId, labels);
             return this;
         }
 
-        /** String ids in first-seen order, which is the order the encoder assigns them. */
+        Fixture constant(String s, long id) {
+            constants.put(s, id);
+            return this;
+        }
+
+        /**
+         * String ids as the encoder assigns them: seeded constants keep their own ids, and
+         * everything else is numbered in first-seen order continuing past the highest seeded id.
+         */
         LinkedHashMap<String, Long> stringIds() {
             LinkedHashMap<String, Long> ids = new LinkedHashMap<>();
+            long next = 0;
+            for (Map.Entry<String, Long> it : constants.entrySet()) {
+                ids.put(it.getKey(), it.getValue());
+                next = Math.max(next, it.getValue());
+            }
             for (String[] args : contexts.values()) {
                 for (String arg : args) {
                     if (!ids.containsKey(arg)) {
-                        ids.put(arg, (long) (ids.size() + 1));
+                        ids.put(arg, ++next);
                     }
                 }
             }
@@ -64,17 +81,17 @@ public class LabelsWireFormatTest {
             }
             sb.putContexts(e.getKey(), cb.build());
         }
-        String[] byId = new String[ids.size()];
-        ids.forEach((s, id) -> byId[(int) (id - 1)] = s);
-        for (int i = 0; i < byId.length; i++) {
-            sb.putStrings(i + 1, byId[i]);
-        }
+        // Ascending id, skipping ids that seeding left as holes - the order the encoder emits.
+        TreeMap<Long, String> byId = new TreeMap<>();
+        ids.forEach((s, id) -> byId.put(id, s));
+        byId.forEach(sb::putStrings);
         return sb.build().toByteArray();
     }
 
     /** Encodes with the hand-written encoder. */
     static byte[] encode(Fixture f) {
         LabelsSnapshotEncoder enc = new LabelsSnapshotEncoder(64, 16);
+        enc.seedStringTable(f.constants);
         for (Map.Entry<Long, String[]> e : f.contexts.entrySet()) {
             enc.writeContext(e.getKey(), e.getValue());
         }
@@ -235,6 +252,25 @@ public class LabelsWireFormatTest {
         // ...but only the minimal encoding survives the round trip unchanged.
         assertThrows(AssertionError.class, () -> LabelsSnapshots.parseCanonical(padded));
         LabelsSnapshots.parseCanonical(canonical);
+    }
+
+    /**
+     * The encoder hands its buffer to the caller and the string table keeps its ids, so reuse
+     * would emit a snapshot carrying the previous batch's ids. Rejected rather than left to
+     * produce quietly wrong labels.
+     */
+    @Test
+    void encoderIsSingleUse() {
+        LabelsSnapshotEncoder enc = new LabelsSnapshotEncoder(64, 16);
+        enc.writeContext(1, new String[]{"k", "v"});
+        enc.writeStringTable();
+        enc.finish();
+
+        assertThrows(IllegalStateException.class, enc::finish);
+        assertThrows(IllegalStateException.class, () -> enc.writeContext(2, new String[]{"k", "v"}));
+        assertThrows(IllegalStateException.class, enc::writeStringTable);
+        assertThrows(IllegalStateException.class,
+                () -> enc.seedStringTable(Collections.singletonMap("a", 1L)));
     }
 
     private static void assertBytes(String expectedHex, Fixture f) {

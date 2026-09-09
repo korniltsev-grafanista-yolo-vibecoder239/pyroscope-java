@@ -3,6 +3,7 @@ package io.pyroscope.labels.v2;
 import io.pyroscope.labels.pb.JfrLabels;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Map;
 
 import static io.pyroscope.labels.v2.ProtoBuffer.putVarint;
@@ -32,7 +33,10 @@ import static io.pyroscope.labels.v2.ProtoBuffer.varintSize;
  * is appended at the end. Nested message lengths are computed exactly before writing rather than
  * back-patched, which keeps the encoding minimal and needs only one capacity check per record.
  *
- * <p>Not thread safe: one instance encodes one snapshot.
+ * <p>Not thread safe, and single use: one instance encodes exactly one snapshot. {@link #finish()}
+ * hands the buffer to the caller, and the string table keeps the ids it assigned, so reusing an
+ * instance afterwards would emit a snapshot carrying the previous batch's ids. That is rejected
+ * rather than left to produce quietly wrong labels.
  */
 final class LabelsSnapshotEncoder {
 
@@ -48,6 +52,7 @@ final class LabelsSnapshotEncoder {
 
     private final ProtoBuffer out;
     private final StringTable table;
+    private boolean finished;
 
     /** Scratch for one context's resolved string ids, alternating key, value. */
     private int[] ids = new int[64];
@@ -66,6 +71,7 @@ final class LabelsSnapshotEncoder {
     }
 
     void seedStringTable(Map<String, Long> constants) {
+        checkNotFinished();
         table.seed(constants);
     }
 
@@ -81,6 +87,7 @@ final class LabelsSnapshotEncoder {
      * @param args flat array of alternating label keys and values, see {@link LabelsSet#args()}
      */
     void writeContext(long contextId, String[] args) {
+        checkNotFinished();
         int n = args.length;
         if (n > ids.length) {
             ids = new int[Math.max(n, ids.length * 2)];
@@ -129,6 +136,7 @@ final class LabelsSnapshotEncoder {
 
     /** Appends the whole string table as {@code LabelsSnapshot.strings} entries, id ascending. */
     void writeStringTable() {
+        checkNotFinished();
         for (int id = 1, n = table.size(); id <= n; id++) {
             String s = table.get(id);
             if (s != null) {
@@ -138,8 +146,24 @@ final class LabelsSnapshotEncoder {
     }
 
     JfrLabels.LabelsSnapshot finish() {
+        checkNotFinished();
+        finished = true;
         int len = out.size();
-        return new JfrLabels.LabelsSnapshot(out.take(), len);
+        byte[] bytes = out.take();
+        // The snapshot is retained until the exporter has finished uploading it, and the buffer can
+        // be up to twice the encoded length after a growth step. Trim when that slack is worth a
+        // copy; in the steady state the size hint leaves ~12% and this does nothing.
+        int slack = bytes.length - len;
+        if (slack > (bytes.length >> 2) && slack > (1 << 20)) {
+            bytes = Arrays.copyOf(bytes, len);
+        }
+        return new JfrLabels.LabelsSnapshot(bytes, len);
+    }
+
+    private void checkNotFinished() {
+        if (finished) {
+            throw new IllegalStateException("this encoder already produced a snapshot");
+        }
     }
 
     private void writeStringEntry(int id, String s) {

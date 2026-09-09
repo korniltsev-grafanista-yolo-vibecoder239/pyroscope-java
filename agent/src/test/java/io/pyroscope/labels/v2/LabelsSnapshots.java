@@ -30,6 +30,14 @@ final class LabelsSnapshots {
      * in order, map entries in wire order. That makes this the tripwire for the encoder drifting
      * into something merely parseable — a padded length varint, say, which protobuf's parser
      * accepts silently.
+     *
+     * <p>This leans on protobuf re-serializing a parsed map in wire order, which holds because
+     * {@code MapField} is backed by a {@code LinkedHashMap} and {@code toByteArray()} does not ask
+     * for deterministic (key-sorted) output. That is an implementation detail rather than a
+     * documented guarantee — the same one {@code LabelsWireFormatTest.encodeReference} already
+     * relies on. If a protobuf upgrade changes it, these tests fail loudly rather than letting a
+     * real encoding bug through, and the fix is to drop back to the golden vectors for
+     * canonicality.
      */
     static JfrLabels.LabelsSnapshot parseCanonical(byte[] encoded) {
         JfrLabels.LabelsSnapshot parsed = parse(encoded);

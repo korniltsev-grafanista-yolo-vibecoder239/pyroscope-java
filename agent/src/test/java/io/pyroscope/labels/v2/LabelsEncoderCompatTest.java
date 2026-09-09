@@ -19,6 +19,7 @@ import static io.pyroscope.labels.v2.LabelsWireFormatTest.encodeReference;
 import static io.pyroscope.labels.v2.LabelsWireFormatTest.fixture;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -126,8 +127,47 @@ public class LabelsEncoderCompatTest {
         assertEquals(flatten(reference), flatten(parsed));
     }
 
+    @Test
+    void seededConstantsMatchProtobufJavaAndAreReusedByLabels() throws Exception {
+        Fixture f = fixture()
+                .constant("service", 1L)
+                .constant("region", 3L)          // 2 left as a hole
+                .add(1, "service", "checkout")   // "service" must reuse the seeded id 1
+                .add(2, "zone", "eu-west-1");
+
+        assertArrayEquals(encodeReference(f), encode(f));
+
+        JfrLabels.LabelsSnapshot parsed = JfrLabels.LabelsSnapshot.parseFrom(encode(f));
+        Map<Long, String> strings = parsed.getStringsMap();
+        assertEquals("service", strings.get(1L));
+        assertEquals("region", strings.get(3L), "an unreferenced constant is still emitted");
+        assertNull(strings.get(2L), "the id gap stays a hole");
+        assertEquals(Long.valueOf(1L),
+                parsed.getContextsMap().get(1L).getLabelsMap().keySet().iterator().next(),
+                "the label should reuse the seeded id rather than intern a second copy");
+        assertEquals(expected(f), flatten(parsed));
+    }
+
     private static Fixture randomFixture(Random r) {
         Fixture f = fixture();
+        // Seed registered constants on roughly half the fixtures, sometimes with a gap in the ids,
+        // which is what a dump racing registerConstant observes. Constants keep their ids and new
+        // strings continue past the highest one, and that is the semantic this PR changed.
+        if (r.nextBoolean()) {
+            long id = 0;
+            int count = 1 + r.nextInt(3);
+            Set<String> used = new HashSet<>();
+            for (int i = 0; i < count; i++) {
+                id += 1 + r.nextInt(3);   // gaps leave holes in the table
+                // Half the time a constant is a string that labels also use, so the encoder has to
+                // reuse the seeded id instead of interning a second copy.
+                String s = POOL[r.nextInt(POOL.length)];
+                String constant = r.nextBoolean() ? s : s + "#const" + i;
+                if (used.add(constant)) {
+                    f.constant(constant, id);
+                }
+            }
+        }
         int contexts = r.nextInt(6);
         for (int c = 0; c < contexts; c++) {
             long id = r.nextBoolean()

@@ -21,6 +21,9 @@ import java.util.Arrays;
 final class ProtoBuffer {
 
     private static final byte[] EMPTY = new byte[0];
+    /** Largest array this VM will reliably allocate. StringTable has its own copy on purpose: the
+     * two classes size independently, and a shared constants holder would couple them for a value
+     * that is really just a JDK limit. */
     private static final int MAX_CAPACITY = Integer.MAX_VALUE - 8;
     /** Doubling above this would overshoot by too much, so growth slows to a quarter. */
     private static final int DOUBLE_UNTIL = 8 << 20;
@@ -43,7 +46,9 @@ final class ProtoBuffer {
      * <p>Call {@link #array()} <em>after</em> this, never before: growing replaces the array.
      */
     int reserve(int n) {
-        if (pos + n > buf.length) {
+        // Subtraction rather than pos + n: both are non-negative, so this cannot overflow into a
+        // false negative near Integer.MAX_VALUE and skip the grow (and its size check) entirely.
+        if (n > buf.length - pos) {
             grow(n);
         }
         return pos;
@@ -68,8 +73,16 @@ final class ProtoBuffer {
         return taken;
     }
 
-    /** Byte count of the varint encoding of a non-negative int. */
+    /**
+     * Byte count of the varint encoding of a non-negative int.
+     *
+     * <p>Non-negative only: a negative int varint-encodes to 10 bytes as a sign-extended long,
+     * which is what {@link #putVarint} would write, but this returns 5. Every id this encoder
+     * sizes is 1-based and positive, so the assert documents the contract rather than guarding a
+     * reachable case.
+     */
     static int varintSize(int v) {
+        assert v >= 0 : "varintSize(int) is for non-negative values, got " + v;
         return (38 - Integer.numberOfLeadingZeros(v | 1)) / 7;
     }
 
