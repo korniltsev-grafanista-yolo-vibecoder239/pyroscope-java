@@ -3,7 +3,6 @@ package io.pyroscope.labels.v2;
 import io.pyroscope.labels.pb.JfrLabels;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Map;
 
 import static io.pyroscope.labels.v2.ProtoBuffer.putVarint;
@@ -149,15 +148,14 @@ final class LabelsSnapshotEncoder {
         checkNotFinished();
         finished = true;
         int len = out.size();
-        byte[] bytes = out.take();
-        // The snapshot is retained until the exporter has finished uploading it, and the buffer can
-        // be up to twice the encoded length after a growth step. Trim when that slack is worth a
-        // copy; in the steady state the size hint leaves ~12% and this does nothing.
-        int slack = bytes.length - len;
-        if (slack > (bytes.length >> 2) && slack > (1 << 20)) {
-            bytes = Arrays.copyOf(bytes, len);
-        }
-        return new JfrLabels.LabelsSnapshot(bytes, len);
+        // Handed over without copying. Growth can leave the buffer holding up to twice the encoded
+        // length, and the snapshot stays reachable until the exporter has uploaded it, so this
+        // trades some transient footprint for not copying the payload. Trimming to size was tried
+        // and reverted: it cost a payload-sized allocation on every dump whose buffer had grown,
+        // which on a non-ASCII workload wiped out the allocation win entirely, and it contradicted
+        // the zero-copy hand-off the exporter relies on. The sizing hint in
+        // Pyroscope.LabelsWrapper.dump() is what actually keeps the slack small (~12%).
+        return new JfrLabels.LabelsSnapshot(out.take(), len);
     }
 
     private void checkNotFinished() {

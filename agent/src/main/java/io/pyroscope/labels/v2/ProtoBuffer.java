@@ -65,7 +65,13 @@ final class ProtoBuffer {
         pos = end;
     }
 
-    /** Hands the buffer over and drops our reference to it, so it is never written to again. */
+    /**
+     * Hands the buffer over and drops our reference to it, so it is never written to again.
+     *
+     * <p>The array is not trimmed to {@link #size()}: after a growth step it can be up to twice
+     * as long, and the caller is expected to carry the length alongside it rather than pay for a
+     * copy of the payload.
+     */
     byte[] take() {
         byte[] taken = buf;
         buf = EMPTY;
